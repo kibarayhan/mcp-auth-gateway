@@ -1,0 +1,12 @@
+# gateway.yaml — Example configuration
+gateway:
+  listen: "localhost:3100"
+
+servers:
+  - name: filesystem
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/test"]
+
+  - name: echo
+    command: "npx"
+    args: ["-y", "@anthropic-ai/mcp-test-server"]
