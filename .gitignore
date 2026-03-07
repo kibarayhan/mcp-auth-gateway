@@ -1,0 +1,4 @@
+mcp-gateway
+*.exe
+logs/
+.DS_Store
