@@ -1,8 +1,28 @@
-# gateway.yaml — Example configuration
+# gateway.yaml — Configuration with auth + policies
 gateway:
   listen: "localhost:3100"
+
+auth:
+  provider: apikey
+  users:
+    - key: "sk-eng-abc123"
+      name: "akibar"
+      roles: ["engineer"]
+    - key: "sk-admin-xyz789"
+      name: "admin-bot"
+      roles: ["admin", "engineer"]
 
 servers:
   - name: filesystem
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/private/tmp/mcp-gateway-test"]
+    policies:
+      allowed_roles: ["engineer", "admin"]
+      tools:
+        write_file:
+          allowed_roles: ["admin"]
+        edit_file:
+          allowed_roles: ["admin"]
+      blocked_args:
+        - pattern: "(?i)\\.env$"
+        - pattern: "(?i)credentials"

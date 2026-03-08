@@ -2,7 +2,10 @@
   "mcpServers": {
     "mcp-gateway": {
       "command": "/Users/akibar/projects/mcp-auth-gateway/mcp-gateway",
-      "args": ["start", "--config", "/Users/akibar/projects/mcp-auth-gateway/gateway.yaml"]
+      "args": ["start", "--config", "/Users/akibar/projects/mcp-auth-gateway/gateway.yaml"],
+      "env": {
+        "MCP_AUTH_TOKEN": "sk-eng-abc123"
+      }
     }
   }
 }
