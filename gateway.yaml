@@ -5,8 +5,4 @@ gateway:
 servers:
   - name: filesystem
     command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/test"]
-
-  - name: echo
-    command: "npx"
-    args: ["-y", "@anthropic-ai/mcp-test-server"]
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/private/tmp/mcp-gateway-test"]
