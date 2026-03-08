@@ -24,6 +24,7 @@ servers:
     policies:
       allowed_roles: ["engineer", "admin"]
       rate_limit: "100/hour"
+      pii_filter: true
       tools:
         write_file:
           allowed_roles: ["admin"]
