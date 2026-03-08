@@ -47,10 +47,17 @@ type BlockedArg struct {
 }
 
 type AuthConfig struct {
-	Provider      string   `yaml:"provider"`
-	Issuer        string   `yaml:"issuer"`
-	ClientID      string   `yaml:"client_id"`
-	AllowedGroups []string `yaml:"allowed_groups"`
+	Provider      string       `yaml:"provider"`
+	Issuer        string       `yaml:"issuer"`
+	ClientID      string       `yaml:"client_id"`
+	AllowedGroups []string     `yaml:"allowed_groups"`
+	Users         []UserConfig `yaml:"users"`
+}
+
+type UserConfig struct {
+	Key   string   `yaml:"key"`
+	Name  string   `yaml:"name"`
+	Roles []string `yaml:"roles"`
 }
 
 type AuditConfig struct {
