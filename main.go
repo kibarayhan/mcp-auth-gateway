@@ -8,13 +8,16 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/akibar/mcp-auth-gateway/internal/audit"
 	"github.com/akibar/mcp-auth-gateway/internal/auth"
 	"github.com/akibar/mcp-auth-gateway/internal/config"
 	"github.com/akibar/mcp-auth-gateway/internal/gateway"
 	"github.com/akibar/mcp-auth-gateway/internal/mcp"
+	"github.com/akibar/mcp-auth-gateway/internal/ratelimit"
 	"github.com/akibar/mcp-auth-gateway/internal/transport"
 	"github.com/akibar/mcp-auth-gateway/internal/upstream"
 )
@@ -58,6 +61,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	gw.User = user
 	slog.Info("authenticated", "user", user.Name, "roles", user.Roles, "authenticated", user.Authenticated)
+
+	// Set up audit logger
+	if cfg.Audit.Path != "" {
+		auditLogger, err := audit.NewLogger(cfg.Audit.Path)
+		if err != nil {
+			return fmt.Errorf("audit: %w", err)
+		}
+		defer auditLogger.Close()
+		gw.Audit = auditLogger
+		slog.Info("audit logging enabled", "path", cfg.Audit.Path)
+	}
 
 	// Start upstream servers and discover their tools
 	for _, serverCfg := range cfg.Servers {
@@ -126,6 +140,17 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 		gw.RegisterTools(serverCfg.Name, toolsResult.Tools)
 		slog.Info("discovered tools", "server", serverCfg.Name, "count", len(toolsResult.Tools))
+
+		// Configure rate limiter for this server
+		if serverCfg.Policies.RateLimit != "" {
+			ratePerSec, err := ratelimit.ParseRate(serverCfg.Policies.RateLimit)
+			if err != nil {
+				slog.Error("invalid rate limit", "server", serverCfg.Name, "rate", serverCfg.Policies.RateLimit, "error", err)
+			} else {
+				gw.RateLimiter.Configure(user.Name, serverCfg.Name, ratePerSec)
+				slog.Info("rate limit configured", "server", serverCfg.Name, "rate", serverCfg.Policies.RateLimit)
+			}
+		}
 	}
 
 	slog.Info("gateway ready", "total_tools", len(gw.AllTools()))
@@ -170,6 +195,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 			transport.WriteMessage(os.Stdout, resp)
 
 		case "tools/call":
+			callStart := time.Now()
+
 			// Route to the correct upstream server
 			var params mcp.ToolCallParams
 			json.Unmarshal(msg.Params, &params)
@@ -202,6 +229,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 			decision := gw.Policy.CheckServerAccess(gw.User, serverCfg)
 			if !decision.Allowed {
 				slog.Warn("policy denied", "user", gw.User.Name, "server", serverName, "tool", params.Name, "reason", decision.Reason)
+				if gw.Audit != nil {
+					gw.Audit.Log(audit.Entry{User: gw.User.Name, Roles: gw.User.Roles, Server: serverName, Tool: params.Name, Args: params.Arguments, Decision: "DENIED", Reason: decision.Reason, Duration: time.Since(callStart)})
+				}
 				errResp := &mcp.JSONRPCMessage{
 					JSONRPC: "2.0",
 					ID:      msg.ID,
@@ -214,10 +244,28 @@ func runStart(cmd *cobra.Command, args []string) error {
 			decision = gw.Policy.CheckToolAccess(gw.User, serverCfg, params.Name, params.Arguments)
 			if !decision.Allowed {
 				slog.Warn("policy denied", "user", gw.User.Name, "server", serverName, "tool", params.Name, "reason", decision.Reason)
+				if gw.Audit != nil {
+					gw.Audit.Log(audit.Entry{User: gw.User.Name, Roles: gw.User.Roles, Server: serverName, Tool: params.Name, Args: params.Arguments, Decision: "DENIED", Reason: decision.Reason, Duration: time.Since(callStart)})
+				}
 				errResp := &mcp.JSONRPCMessage{
 					JSONRPC: "2.0",
 					ID:      msg.ID,
 					Error:   &mcp.JSONRPCError{Code: -32600, Message: fmt.Sprintf("access denied: %s", decision.Reason)},
+				}
+				transport.WriteMessage(os.Stdout, errResp)
+				continue
+			}
+
+			// Rate limit check
+			if !gw.RateLimiter.Allow(gw.User.Name, serverName) {
+				slog.Warn("rate limited", "user", gw.User.Name, "server", serverName, "tool", params.Name)
+				if gw.Audit != nil {
+					gw.Audit.Log(audit.Entry{User: gw.User.Name, Roles: gw.User.Roles, Server: serverName, Tool: params.Name, Args: params.Arguments, Decision: "RATE_LIMITED", Duration: time.Since(callStart)})
+				}
+				errResp := &mcp.JSONRPCMessage{
+					JSONRPC: "2.0",
+					ID:      msg.ID,
+					Error:   &mcp.JSONRPCError{Code: -32600, Message: "rate limit exceeded"},
 				}
 				transport.WriteMessage(os.Stdout, errResp)
 				continue
@@ -241,6 +289,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 				}
 				transport.WriteMessage(os.Stdout, errResp)
 				continue
+			}
+
+			// Audit log — allowed call with duration
+			if gw.Audit != nil {
+				gw.Audit.Log(audit.Entry{User: gw.User.Name, Roles: gw.User.Roles, Server: serverName, Tool: params.Name, Args: params.Arguments, Decision: "ALLOWED", Duration: time.Since(callStart)})
 			}
 
 			// Forward response back to client

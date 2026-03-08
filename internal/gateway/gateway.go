@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/akibar/mcp-auth-gateway/internal/audit"
 	"github.com/akibar/mcp-auth-gateway/internal/auth"
 	"github.com/akibar/mcp-auth-gateway/internal/config"
 	"github.com/akibar/mcp-auth-gateway/internal/mcp"
 	"github.com/akibar/mcp-auth-gateway/internal/policy"
+	"github.com/akibar/mcp-auth-gateway/internal/ratelimit"
 	"github.com/akibar/mcp-auth-gateway/internal/upstream"
 )
 
@@ -16,6 +18,8 @@ type Gateway struct {
 	Config       *config.Config
 	Policy       *policy.Engine
 	User         *auth.User
+	Audit        *audit.Logger
+	RateLimiter  *ratelimit.Limiter
 	servers      map[string]*upstream.Server
 	toolToServer map[string]string
 	allTools     []mcp.ToolInfo
@@ -26,6 +30,7 @@ func New(cfg *config.Config) *Gateway {
 	return &Gateway{
 		Config:       cfg,
 		Policy:       policy.New(),
+		RateLimiter:  ratelimit.New(),
 		servers:      make(map[string]*upstream.Server),
 		toolToServer: make(map[string]string),
 	}
