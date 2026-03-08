@@ -16,10 +16,18 @@ type Filter struct {
 func NewFilter() *Filter {
 	return &Filter{
 		patterns: []pattern{
+			// AWS account IDs (12 digits, often in ARNs)
+			{regexp.MustCompile(`\b\d{12}\b`), "[AWS_ACCOUNT]"},
+			// AWS ARNs (full resource identifiers)
+			{regexp.MustCompile(`arn:aws[a-zA-Z-]*:[a-zA-Z0-9-]+:[a-z0-9-]*:\d{12}:[^\s"',]+`), "[REDACTED_ARN]"},
+			// AWS region in resource URLs
+			{regexp.MustCompile(`(https?://[^/]*\.)(eu-west-[123]|eu-central-1|us-east-[12]|us-west-[12]|ap-southeast-[12])(\.[^/]*)`), "${1}[REGION]${3}"},
 			// JWT tokens (3 base64 segments separated by dots)
 			{regexp.MustCompile(`eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`), "[REDACTED_JWT]"},
 			// AWS access keys
 			{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), "[REDACTED_KEY]"},
+			// AWS secret keys
+			{regexp.MustCompile(`\b[A-Za-z0-9/+=]{40}\b`), "[REDACTED_SECRET]"},
 			// GitHub PATs
 			{regexp.MustCompile(`\bghp_[A-Za-z0-9]{36,}\b`), "[REDACTED_KEY]"},
 			// OpenAI-style API keys

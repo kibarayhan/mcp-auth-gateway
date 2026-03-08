@@ -33,3 +33,14 @@ servers:
       blocked_args:
         - pattern: "(?i)\\.env$"
         - pattern: "(?i)credentials"
+
+  - name: aws-serverless
+    command: "uvx"
+    args: ["awslabs.aws-serverless-mcp-server@latest"]
+    env:
+      AWS_PROFILE: "dev"
+    policies:
+      allowed_roles: ["engineer", "admin"]
+      rate_limit: "50/hour"
+      pii_filter: true
+      audit: verbose
