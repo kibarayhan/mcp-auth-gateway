@@ -12,7 +12,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # --- Scene 1: The Problem ---
-echo "▸ PROBLEM: 3,500+ MCP servers. Almost none handle security."
+echo "▸ PROBLEM: MCP servers are everywhere. Almost none handle security."
 echo "  No auth. No rate limits. No audit logs. No PII filtering."
 echo ""
 sleep 2

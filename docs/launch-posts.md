@@ -10,7 +10,7 @@
 
 I built a transparent reverse proxy that sits in front of MCP servers and adds enterprise security. Single Go binary, simple YAML config, works with Claude Code out of the box.
 
-There are 3,500+ MCP servers in the ecosystem now. Almost none handle authentication, authorization, rate limiting, or audit logging. Every company adopting MCP for AI agents faces the same gap.
+The MCP ecosystem is growing fast — thousands of servers and counting. Almost none handle authentication, authorization, rate limiting, or audit logging. Every company adopting MCP for AI agents faces the same gap.
 
 MCP Auth Gateway solves this with six modules:
 
