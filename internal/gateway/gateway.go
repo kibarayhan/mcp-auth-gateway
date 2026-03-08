@@ -4,14 +4,18 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/akibar/mcp-auth-gateway/internal/auth"
 	"github.com/akibar/mcp-auth-gateway/internal/config"
 	"github.com/akibar/mcp-auth-gateway/internal/mcp"
+	"github.com/akibar/mcp-auth-gateway/internal/policy"
 	"github.com/akibar/mcp-auth-gateway/internal/upstream"
 )
 
 // Gateway is the core MCP proxy that routes tool calls to upstream servers.
 type Gateway struct {
 	Config       *config.Config
+	Policy       *policy.Engine
+	User         *auth.User
 	servers      map[string]*upstream.Server
 	toolToServer map[string]string
 	allTools     []mcp.ToolInfo
@@ -21,6 +25,7 @@ type Gateway struct {
 func New(cfg *config.Config) *Gateway {
 	return &Gateway{
 		Config:       cfg,
+		Policy:       policy.New(),
 		servers:      make(map[string]*upstream.Server),
 		toolToServer: make(map[string]string),
 	}
@@ -58,4 +63,14 @@ func (g *Gateway) GetServer(name string) (*upstream.Server, error) {
 		return nil, fmt.Errorf("server %q not found", name)
 	}
 	return srv, nil
+}
+
+// ServerConfigByName returns the config for a named server.
+func (g *Gateway) ServerConfigByName(name string) (config.ServerConfig, bool) {
+	for _, s := range g.Config.Servers {
+		if s.Name == name {
+			return s, true
+		}
+	}
+	return config.ServerConfig{}, false
 }

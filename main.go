@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/akibar/mcp-auth-gateway/internal/auth"
 	"github.com/akibar/mcp-auth-gateway/internal/config"
 	"github.com/akibar/mcp-auth-gateway/internal/gateway"
 	"github.com/akibar/mcp-auth-gateway/internal/mcp"
@@ -47,6 +48,16 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	gw := gateway.New(cfg)
 	ctx := context.Background()
+
+	// Authenticate caller
+	authenticator := auth.NewAPIKeyAuth(cfg.Auth.Users)
+	token := os.Getenv("MCP_AUTH_TOKEN")
+	user, err := authenticator.Authenticate(token)
+	if err != nil {
+		return fmt.Errorf("auth: %w", err)
+	}
+	gw.User = user
+	slog.Info("authenticated", "user", user.Name, "roles", user.Roles, "authenticated", user.Authenticated)
 
 	// Start upstream servers and discover their tools
 	for _, serverCfg := range cfg.Servers {
@@ -184,6 +195,35 @@ func runStart(cmd *cobra.Command, args []string) error {
 				transport.WriteMessage(os.Stdout, errResp)
 				continue
 			}
+
+			// Policy checks
+			serverCfg, _ := gw.ServerConfigByName(serverName)
+
+			decision := gw.Policy.CheckServerAccess(gw.User, serverCfg)
+			if !decision.Allowed {
+				slog.Warn("policy denied", "user", gw.User.Name, "server", serverName, "tool", params.Name, "reason", decision.Reason)
+				errResp := &mcp.JSONRPCMessage{
+					JSONRPC: "2.0",
+					ID:      msg.ID,
+					Error:   &mcp.JSONRPCError{Code: -32600, Message: fmt.Sprintf("access denied: %s", decision.Reason)},
+				}
+				transport.WriteMessage(os.Stdout, errResp)
+				continue
+			}
+
+			decision = gw.Policy.CheckToolAccess(gw.User, serverCfg, params.Name, params.Arguments)
+			if !decision.Allowed {
+				slog.Warn("policy denied", "user", gw.User.Name, "server", serverName, "tool", params.Name, "reason", decision.Reason)
+				errResp := &mcp.JSONRPCMessage{
+					JSONRPC: "2.0",
+					ID:      msg.ID,
+					Error:   &mcp.JSONRPCError{Code: -32600, Message: fmt.Sprintf("access denied: %s", decision.Reason)},
+				}
+				transport.WriteMessage(os.Stdout, errResp)
+				continue
+			}
+
+			slog.Info("policy allowed", "user", gw.User.Name, "server", serverName, "tool", params.Name)
 
 			// Forward to upstream
 			transport.WriteMessage(srv.Stdin, &msg)
