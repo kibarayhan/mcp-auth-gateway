@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 
 	"gopkg.in/yaml.v3"
 )
@@ -78,4 +79,43 @@ func Load(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// Validate checks the config for errors.
+func (c *Config) Validate() error {
+	if len(c.Servers) == 0 {
+		return fmt.Errorf("config: at least one server is required")
+	}
+
+	names := make(map[string]bool)
+	for i, s := range c.Servers {
+		if s.Name == "" {
+			return fmt.Errorf("config: server[%d] missing name", i)
+		}
+		if names[s.Name] {
+			return fmt.Errorf("config: duplicate server name %q", s.Name)
+		}
+		names[s.Name] = true
+
+		if s.Command == "" {
+			return fmt.Errorf("config: server %q missing command", s.Name)
+		}
+
+		for _, ba := range s.Policies.BlockedArgs {
+			if _, err := regexp.Compile(ba.Pattern); err != nil {
+				return fmt.Errorf("config: server %q has invalid blocked_args pattern %q: %w", s.Name, ba.Pattern, err)
+			}
+		}
+	}
+
+	for i, u := range c.Auth.Users {
+		if u.Key == "" {
+			return fmt.Errorf("config: auth.users[%d] missing key", i)
+		}
+		if u.Name == "" {
+			return fmt.Errorf("config: auth.users[%d] missing name", i)
+		}
+	}
+
+	return nil
 }

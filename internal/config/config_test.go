@@ -102,3 +102,69 @@ servers:
 		t.Errorf("Pattern = %q, want %q", server.Policies.BlockedArgs[0].Pattern, "DROP TABLE")
 	}
 }
+
+func TestValidate_Valid(t *testing.T) {
+	cfg := &Config{
+		Servers: []ServerConfig{
+			{Name: "test", Command: "echo"},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("should be valid: %v", err)
+	}
+}
+
+func TestValidate_NoServers(t *testing.T) {
+	cfg := &Config{}
+	if err := cfg.Validate(); err == nil {
+		t.Error("should reject config with no servers")
+	}
+}
+
+func TestValidate_DuplicateServerName(t *testing.T) {
+	cfg := &Config{
+		Servers: []ServerConfig{
+			{Name: "dup", Command: "echo"},
+			{Name: "dup", Command: "cat"},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("should reject duplicate server names")
+	}
+}
+
+func TestValidate_MissingCommand(t *testing.T) {
+	cfg := &Config{
+		Servers: []ServerConfig{
+			{Name: "test"},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("should reject server with no command")
+	}
+}
+
+func TestValidate_InvalidRegex(t *testing.T) {
+	cfg := &Config{
+		Servers: []ServerConfig{
+			{Name: "test", Command: "echo", Policies: PolicyConfig{
+				BlockedArgs: []BlockedArg{{Pattern: "[invalid"}},
+			}},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("should reject invalid regex pattern")
+	}
+}
+
+func TestValidate_UserMissingKey(t *testing.T) {
+	cfg := &Config{
+		Servers: []ServerConfig{{Name: "test", Command: "echo"}},
+		Auth: AuthConfig{
+			Users: []UserConfig{{Name: "test"}},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("should reject user with no key")
+	}
+}

@@ -47,6 +47,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	slog.Info("starting gateway", "config", configPath, "servers", len(cfg.Servers))
 
