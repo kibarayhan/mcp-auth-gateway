@@ -1,4 +1,4 @@
-# gateway.yaml — Configuration with auth + policies
+# gateway.yaml — Configuration with auth, policies, audit, and rate limiting
 gateway:
   listen: "localhost:3100"
 
@@ -12,12 +12,18 @@ auth:
       name: "admin-bot"
       roles: ["admin", "engineer"]
 
+audit:
+  destination: file
+  path: "./logs/audit.jsonl"
+  retention_days: 90
+
 servers:
   - name: filesystem
     command: "npx"
     args: ["-y", "@modelcontextprotocol/server-filesystem", "/private/tmp/mcp-gateway-test"]
     policies:
       allowed_roles: ["engineer", "admin"]
+      rate_limit: "100/hour"
       tools:
         write_file:
           allowed_roles: ["admin"]
