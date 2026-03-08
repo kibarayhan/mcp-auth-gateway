@@ -8,6 +8,7 @@ import (
 	"github.com/akibar/mcp-auth-gateway/internal/auth"
 	"github.com/akibar/mcp-auth-gateway/internal/config"
 	"github.com/akibar/mcp-auth-gateway/internal/mcp"
+	"github.com/akibar/mcp-auth-gateway/internal/pii"
 	"github.com/akibar/mcp-auth-gateway/internal/policy"
 	"github.com/akibar/mcp-auth-gateway/internal/ratelimit"
 	"github.com/akibar/mcp-auth-gateway/internal/upstream"
@@ -20,6 +21,7 @@ type Gateway struct {
 	User         *auth.User
 	Audit        *audit.Logger
 	RateLimiter  *ratelimit.Limiter
+	PIIFilter    *pii.Filter
 	servers      map[string]*upstream.Server
 	toolToServer map[string]string
 	allTools     []mcp.ToolInfo

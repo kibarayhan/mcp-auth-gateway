@@ -17,6 +17,7 @@ import (
 	"github.com/akibar/mcp-auth-gateway/internal/config"
 	"github.com/akibar/mcp-auth-gateway/internal/gateway"
 	"github.com/akibar/mcp-auth-gateway/internal/mcp"
+	"github.com/akibar/mcp-auth-gateway/internal/pii"
 	"github.com/akibar/mcp-auth-gateway/internal/ratelimit"
 	"github.com/akibar/mcp-auth-gateway/internal/transport"
 	"github.com/akibar/mcp-auth-gateway/internal/upstream"
@@ -72,6 +73,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 		gw.Audit = auditLogger
 		slog.Info("audit logging enabled", "path", cfg.Audit.Path)
 	}
+
+	// Set up PII filter
+	piiFilter := pii.NewFilter()
+	gw.PIIFilter = piiFilter
 
 	// Start upstream servers and discover their tools
 	for _, serverCfg := range cfg.Servers {
@@ -294,6 +299,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 			// Audit log — allowed call with duration
 			if gw.Audit != nil {
 				gw.Audit.Log(audit.Entry{User: gw.User.Name, Roles: gw.User.Roles, Server: serverName, Tool: params.Name, Args: params.Arguments, Decision: "ALLOWED", Duration: time.Since(callStart)})
+			}
+
+			// PII filter on response
+			if serverCfg.Policies.PIIFilter && gw.PIIFilter != nil && resp.Result != nil {
+				resp.Result = gw.PIIFilter.RedactJSON(resp.Result)
+				slog.Debug("pii filtered", "server", serverName, "tool", params.Name)
 			}
 
 			// Forward response back to client
