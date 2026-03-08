@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"regexp"
 
 	"github.com/akibar/mcp-auth-gateway/internal/auth"
 	"github.com/akibar/mcp-auth-gateway/internal/config"
@@ -40,6 +41,41 @@ func (e *Engine) CheckServerAccess(user *auth.User, server config.ServerConfig) 
 			"user %q (roles: %v) not authorized for server %q (requires: %v)",
 			user.Name, user.Roles, server.Name, server.Policies.AllowedRoles,
 		))
+	}
+
+	return allow()
+}
+
+// CheckToolAccess checks if a user can call a specific tool, including argument inspection.
+func (e *Engine) CheckToolAccess(user *auth.User, server config.ServerConfig, toolName string, args map[string]string) Decision {
+	// Check tool-level policy
+	if toolPolicy, exists := server.Policies.Tools[toolName]; exists {
+		allowed := toolPolicy.AllowedRoles
+		if toolPolicy.RequiresRole != "" {
+			allowed = append(allowed, toolPolicy.RequiresRole)
+		}
+		if len(allowed) > 0 && !user.HasAnyRole(allowed) {
+			return deny(fmt.Sprintf(
+				"user %q not authorized for tool %q (requires: %v)",
+				user.Name, toolName, allowed,
+			))
+		}
+	}
+
+	// Check argument-level blocked patterns
+	for _, blocked := range server.Policies.BlockedArgs {
+		re, err := regexp.Compile(blocked.Pattern)
+		if err != nil {
+			return deny(fmt.Sprintf("invalid blocked_args pattern %q: %v", blocked.Pattern, err))
+		}
+		for argName, argValue := range args {
+			if re.MatchString(argValue) {
+				return deny(fmt.Sprintf(
+					"argument %q matches blocked pattern %q",
+					argName, blocked.Pattern,
+				))
+			}
+		}
 	}
 
 	return allow()
