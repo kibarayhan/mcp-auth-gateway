@@ -44,3 +44,23 @@ servers:
       rate_limit: "50/hour"
       pii_filter: true
       audit: verbose
+
+  - name: firecrawl
+    command: "npx"
+    args: ["-y", "firecrawl-mcp"]
+    env:
+      FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY}"
+    policies:
+      allowed_roles: ["engineer", "admin"]
+      rate_limit: "30/hour"
+      pii_filter: true
+      blocked_args:
+        - pattern: "(?i)booking\\.com"
+        - pattern: "(?i)booking\\.org"
+        - pattern: "(?i)\\.booking\\."
+        - pattern: "(?i)bkng\\."
+        - pattern: "(?i)intranet\\."
+        - pattern: "(?i)confluence\\.booking"
+        - pattern: "(?i)gitlab\\.booking"
+        - pattern: "(?i)jira\\.booking"
+        - pattern: "(?i)alertapi\\.booking"
