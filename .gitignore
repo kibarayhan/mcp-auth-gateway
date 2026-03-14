@@ -2,3 +2,5 @@ mcp-gateway
 *.exe
 logs/
 .DS_Store
+.claude/
+*.log
