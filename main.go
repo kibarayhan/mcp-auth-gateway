@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -37,6 +38,96 @@ var startCmd = &cobra.Command{
 func init() {
 	startCmd.Flags().StringP("config", "c", "gateway.yaml", "Path to config file")
 	rootCmd.AddCommand(startCmd)
+}
+
+// initUpstreamServer boots a single upstream MCP server, performs the
+// initialize handshake, discovers its tools, and registers them on the gateway.
+func initUpstreamServer(ctx context.Context, gw *gateway.Gateway, serverCfg config.ServerConfig) {
+	slog.Info("starting upstream server", "name", serverCfg.Name, "command", serverCfg.Command)
+
+	// Build env slice from config map
+	var env []string
+	for k, v := range serverCfg.Env {
+		env = append(env, k+"="+v)
+	}
+
+	srv, err := upstream.Start(ctx, serverCfg.Command, serverCfg.Args, env)
+	if err != nil {
+		slog.Error("failed to start server", "name", serverCfg.Name, "error", err)
+		return
+	}
+	srv.Name = serverCfg.Name
+	gw.SetServer(serverCfg.Name, srv)
+
+	// Send initialize request
+	initReq := &mcp.JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "initialize",
+		Params:  json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"mcp-gateway","version":"0.1.0"}}`),
+	}
+	id := json.RawMessage(`1`)
+	initReq.ID = &id
+
+	if err := transport.WriteMessage(srv.Stdin, initReq); err != nil {
+		slog.Error("failed to send initialize", "server", serverCfg.Name, "error", err)
+		return
+	}
+
+	resp, err := transport.ReadMessage(srv.Stdout)
+	if err != nil {
+		slog.Error("failed to read initialize response", "server", serverCfg.Name, "error", err)
+		return
+	}
+	slog.Debug("initialize response", "server", serverCfg.Name, "result", string(resp.Result))
+
+	// Send initialized notification
+	initNotif := &mcp.JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+	transport.WriteMessage(srv.Stdin, initNotif)
+
+	// Request tools list
+	toolsReq := &mcp.JSONRPCMessage{
+		JSONRPC: "2.0",
+		Method:  "tools/list",
+	}
+	toolsID := json.RawMessage(`2`)
+	toolsReq.ID = &toolsID
+
+	if err := transport.WriteMessage(srv.Stdin, toolsReq); err != nil {
+		slog.Error("failed to request tools", "server", serverCfg.Name, "error", err)
+		return
+	}
+
+	toolsResp, err := transport.ReadMessage(srv.Stdout)
+	if err != nil {
+		slog.Error("failed to read tools", "server", serverCfg.Name, "error", err)
+		return
+	}
+
+	var toolsResult mcp.ToolListResult
+	if err := json.Unmarshal(toolsResp.Result, &toolsResult); err != nil {
+		slog.Error("failed to parse tools", "server", serverCfg.Name, "error", err)
+		return
+	}
+
+	gw.RegisterTools(serverCfg.Name, toolsResult.Tools)
+	slog.Info("discovered tools", "server", serverCfg.Name, "count", len(toolsResult.Tools))
+
+	// Configure rate limiter
+	if serverCfg.Policies.RateLimit != "" {
+		ratePerSec, err := ratelimit.ParseRate(serverCfg.Policies.RateLimit)
+		if err != nil {
+			slog.Error("invalid rate limit", "server", serverCfg.Name, "rate", serverCfg.Policies.RateLimit, "error", err)
+		} else {
+			user := gw.User
+			if user != nil {
+				gw.RateLimiter.Configure(user.Name, serverCfg.Name, ratePerSec)
+				slog.Info("rate limit configured", "server", serverCfg.Name, "rate", serverCfg.Policies.RateLimit)
+			}
+		}
+	}
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -82,89 +173,24 @@ func runStart(cmd *cobra.Command, args []string) error {
 	piiFilter := pii.NewFilter()
 	gw.PIIFilter = piiFilter
 
-	// Start upstream servers and discover their tools
+	// Boot all upstream servers in parallel — don't block the stdin loop.
+	var wg sync.WaitGroup
 	for _, serverCfg := range cfg.Servers {
-		slog.Info("starting upstream server", "name", serverCfg.Name, "command", serverCfg.Command)
-
-		srv, err := upstream.Start(ctx, serverCfg.Command, serverCfg.Args, nil)
-		if err != nil {
-			return fmt.Errorf("start server %s: %w", serverCfg.Name, err)
-		}
-		srv.Name = serverCfg.Name
-		gw.SetServer(serverCfg.Name, srv)
-
-		// Send initialize request to discover capabilities
-		initReq := &mcp.JSONRPCMessage{
-			JSONRPC: "2.0",
-			Method:  "initialize",
-			Params:  json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"mcp-gateway","version":"0.1.0"}}`),
-		}
-		id := json.RawMessage(`1`)
-		initReq.ID = &id
-
-		if err := transport.WriteMessage(srv.Stdin, initReq); err != nil {
-			slog.Error("failed to send initialize", "server", serverCfg.Name, "error", err)
-			continue
-		}
-
-		// Read initialize response
-		resp, err := transport.ReadMessage(srv.Stdout)
-		if err != nil {
-			slog.Error("failed to read initialize response", "server", serverCfg.Name, "error", err)
-			continue
-		}
-		slog.Debug("initialize response", "server", serverCfg.Name, "result", string(resp.Result))
-
-		// Send initialized notification
-		initNotif := &mcp.JSONRPCMessage{
-			JSONRPC: "2.0",
-			Method:  "notifications/initialized",
-		}
-		transport.WriteMessage(srv.Stdin, initNotif)
-
-		// Request tools list
-		toolsReq := &mcp.JSONRPCMessage{
-			JSONRPC: "2.0",
-			Method:  "tools/list",
-		}
-		toolsID := json.RawMessage(`2`)
-		toolsReq.ID = &toolsID
-
-		if err := transport.WriteMessage(srv.Stdin, toolsReq); err != nil {
-			slog.Error("failed to request tools", "server", serverCfg.Name, "error", err)
-			continue
-		}
-
-		toolsResp, err := transport.ReadMessage(srv.Stdout)
-		if err != nil {
-			slog.Error("failed to read tools", "server", serverCfg.Name, "error", err)
-			continue
-		}
-
-		var toolsResult mcp.ToolListResult
-		if err := json.Unmarshal(toolsResp.Result, &toolsResult); err != nil {
-			slog.Error("failed to parse tools", "server", serverCfg.Name, "error", err)
-			continue
-		}
-
-		gw.RegisterTools(serverCfg.Name, toolsResult.Tools)
-		slog.Info("discovered tools", "server", serverCfg.Name, "count", len(toolsResult.Tools))
-
-		// Configure rate limiter for this server
-		if serverCfg.Policies.RateLimit != "" {
-			ratePerSec, err := ratelimit.ParseRate(serverCfg.Policies.RateLimit)
-			if err != nil {
-				slog.Error("invalid rate limit", "server", serverCfg.Name, "rate", serverCfg.Policies.RateLimit, "error", err)
-			} else {
-				gw.RateLimiter.Configure(user.Name, serverCfg.Name, ratePerSec)
-				slog.Info("rate limit configured", "server", serverCfg.Name, "rate", serverCfg.Policies.RateLimit)
-			}
-		}
+		wg.Add(1)
+		go func(sc config.ServerConfig) {
+			defer wg.Done()
+			initUpstreamServer(ctx, gw, sc)
+		}(serverCfg)
 	}
 
-	slog.Info("gateway ready", "total_tools", len(gw.AllTools()))
+	// Signal readiness once all upstreams are initialized.
+	go func() {
+		wg.Wait()
+		close(gw.Ready)
+		slog.Info("gateway ready", "total_tools", len(gw.AllTools()))
+	}()
 
-	// Main proxy loop: read from stdin, route to upstream, write to stdout
+	// Main proxy loop — starts immediately so initialize responds fast.
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var msg mcp.JSONRPCMessage
@@ -175,7 +201,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 		switch msg.Method {
 		case "initialize":
-			// Respond with our own capabilities
+			// Respond immediately — no need to wait for upstreams.
 			result := map[string]interface{}{
 				"protocolVersion": "2024-11-05",
 				"capabilities":   map[string]interface{}{"tools": map[string]interface{}{}},
@@ -193,7 +219,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 			// Ignore
 
 		case "tools/list":
-			// Return aggregated tools from all upstream servers
+			// Wait for upstreams to finish booting before returning the tool list.
+			<-gw.Ready
 			result := mcp.ToolListResult{Tools: gw.AllTools()}
 			resultJSON, _ := json.Marshal(result)
 			resp := &mcp.JSONRPCMessage{
@@ -204,9 +231,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 			transport.WriteMessage(os.Stdout, resp)
 
 		case "tools/call":
+			// Wait for upstreams to be ready before routing calls.
+			<-gw.Ready
+
 			callStart := time.Now()
 
-			// Route to the correct upstream server
 			var params mcp.ToolCallParams
 			json.Unmarshal(msg.Params, &params)
 
@@ -300,7 +329,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 				continue
 			}
 
-			// Audit log — allowed call with duration
+			// Audit log
 			if gw.Audit != nil {
 				gw.Audit.Log(audit.Entry{User: gw.User.Name, Roles: gw.User.Roles, Server: serverName, Tool: params.Name, Args: params.Arguments, Decision: "ALLOWED", Duration: time.Since(callStart)})
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 )
 
@@ -17,12 +18,14 @@ type Server struct {
 }
 
 // Start spawns an upstream MCP server as a child process.
+// Extra env vars are merged with the parent process environment (not replaced).
 func Start(ctx context.Context, command string, args []string, env []string) (*Server, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
 	cmd := exec.CommandContext(ctx, command, args...)
 	if len(env) > 0 {
-		cmd.Env = env
+		// Inherit parent env, then overlay the extra vars.
+		cmd.Env = append(os.Environ(), env...)
 	}
 
 	stdin, err := cmd.StdinPipe()
